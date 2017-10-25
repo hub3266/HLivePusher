@@ -4,6 +4,7 @@ include_directories(src/main/cpp/include/)
 set(DIRROOT ${PROJECT_SOURCE_DIR}/libs/${ANDROID_ABI})
 add_subdirectory(src/main/cpp/librtmp)
 
+
 add_library(
              native-lib
              SHARED
