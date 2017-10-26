@@ -28,6 +28,9 @@ public class PushNative {
                                        int fps);
     public native void fireVideo(byte[] buffer);
     public native void startPusher(String url);
+    public native void setAudipOptions(int sampleRate, int channel);
+    public native void fireAudio(byte[] buff,int length);
+
 
 
     public void onPostNativeError(int code) {

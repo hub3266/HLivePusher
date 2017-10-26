@@ -56,6 +56,7 @@ public class AudioPusher extends Pusher {
                 int len = audioRecord.read(buffer, 0, buffer.length);
                 if(len > 0){
                     //传给Native代码，进行音频编码
+                    PushNative.getInstance().fireAudio(buffer,len);
                 }
             }
         }

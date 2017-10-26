@@ -34,6 +34,10 @@ char *rtmp_path;
 x264_t *videoEncHandle = NULL;
 x264_picture_t *pic_in = NULL;
 x264_picture_t *pic_out = NULL;
+//音频
+faacEncHandle audioEncHandle;
+ULONG nInputSamples;//采样位数
+ULONG nMaxOutputBytes;//
 
 //线程
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -42,27 +46,14 @@ pthread_t publisher_tid;
 std::vector<RTMPPacket *> mVector;
 
 //jni
-JavaVM *jvm;
 
 
 void add_264_header_data(unsigned char *pString, unsigned char *pps, int spslength,
                          int ppsLength);
-
 void add_rtmp_packet(RTMPPacket *pPacket);
 void add_264_body_data(uint8_t *buf, int length);
-
-JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
-    jvm = vm;
-    JNIEnv *env = NULL;
-    jint result = -1;
-    if (jvm) {
-        LOGD("jvm init success");
-    }
-    if (vm->GetEnv((void **) &env, JNI_VERSION_1_4) != JNI_OK) {
-        return result;
-    }
-    return JNI_VERSION_1_4;
-}
+void add_aac_body_data(unsigned char *buffer, int len);
+void add_aac_head_data();
 
 JNIEXPORT void JNICALL
 Java_com_hubing_hlivepusher_pusher_PushNative_setVideoOptions(JNIEnv *env, jobject instance,
@@ -104,7 +95,7 @@ Java_com_hubing_hlivepusher_pusher_PushNative_setVideoOptions(JNIEnv *env, jobje
     param.i_keyint_max = fps * 2;//关键帧的最大间隔帧数
 
     param.rc.i_rc_method = X264_RC_ABR;  //参数i_rc_method表示码率控制，CQP(恒定质量)，CRF(恒定码率)，ABR(平均码率)
-    param.rc.i_bitrate = mBitrate/1000;// 码率(比特率,单位Kbps)
+    param.rc.i_bitrate = mBitrate / 1000;// 码率(比特率,单位Kbps)
     param.rc.i_vbv_max_bitrate = mBitrate / 1000 * 1.2;//最大码率
     param.rc.i_vbv_buffer_size = mBitrate / 1000; //设置了i_vbv_max_bitrate必须设置此参数，码率控制区大小,单位kbps
     param.b_vfr_input = 0;// VFR输入。1 ：时间基和时间戳用于码率控制  0 ：仅帧率用于码率控制
@@ -210,7 +201,7 @@ void *puliser(void *args) {
             goto END;
         }
         readyRtmp = 1;
-
+        add_aac_head_data();
         while (publishing) {
             pthread_mutex_lock(&mutex);
             if (mVector.size() <= 0) {
@@ -328,7 +319,7 @@ void add_264_body_data(uint8_t *buf, int length) {
         //如果第3位是ox00  界定符 *00 00 00 01
         buf += 4;
         length -= 4;
-    } else if (buf[2] == 0x01){
+    } else if (buf[2] == 0x01) {
         //如果第3位是ox01  界定符 * 00 00 01
         buf += 3;
         length -= 3;
@@ -374,6 +365,119 @@ void add_rtmp_packet(RTMPPacket *pPacket) {
     pthread_mutex_unlock(&mutex);
 
 }
+
+/************************音频****************************/
+JNIEXPORT void JNICALL
+Java_com_hubing_hlivepusher_pusher_PushNative_setAudipOptions(JNIEnv *env, jobject instance,
+                                                              jint sampleRate, jint channel) {
+    if (audioEncHandle) {
+        return;
+    }
+    audioEncHandle = faacEncOpen(sampleRate, channel, &nInputSamples, &nMaxOutputBytes);
+    if (!audioEncHandle) {
+        LOGI("音频编码器打开失败！");
+        return;
+    }
+    faacEncConfigurationPtr configuration = faacEncGetCurrentConfiguration(audioEncHandle);
+    configuration->mpegVersion = MPEG4;//MPEG version, 2 or 4 - MPEG版本，MPEG2 or MPEG4
+    configuration->allowMidside = 1;//Allow mid/side coding - 是否允许mid/side coding 取值：0-NO 1-YES
+    configuration->aacObjectType = LOW;     /* AAC object type - AAC对象类型，详细见补充说明1，取值:1-MAIN 2-LOW 3-SSR 4-LTP*/
+    configuration->outputFormat = 0;//输出是否包含ADTS头
+    configuration->useTns = 1; //时域噪音控制,大概就是消爆音Use Temporal Noise Shaping - 瞬时噪声定形(temporal noise shaping，TNS)滤波器,取值：0-NO 1-YES
+
+    /* Use one of the channels as LFE channel - 是否允许一个通道为低频通道，取值：0-NO 1-YES*/
+    /* LFE(low-frequencyeffects) */
+    configuration->useLfe = 0;
+
+    /**
+      *PCM Sample Input Format  - 输入pcm数据类型
+      *0 FAAC_INPUT_NULL    invalid, signifies a misconfigured config
+      *1 FAAC_INPUT_16BIT native endian 16bit
+      *2 FAAC_INPUT_24BIT native endian 24bit in 24 bits(not implemented)
+      *3 FAAC_INPUT_32BIT native endian 24bit in 32 bits (DEFAULT)
+      *f4 FAAC_INPUT_FLOAT 32bit floating point
+    */
+    configuration->inputFormat = FAAC_INPUT_16BIT;
+
+    /* 默认100，值越大音质越高 */
+    configuration->quantqual = 100;
+    /* AAC file frequency bandwidth - 频宽 取值：0， 32000，64000都可以*/
+    configuration->bandWidth = 0;
+
+    /* block type enforcing -
+ * (SHORTCTL_NORMAL/SHORTCTL_NOSHORT/SHORTCTL_NOLONG)
+ */
+    configuration->shortctl = SHORTCTL_NORMAL;
+    if (!faacEncSetConfiguration(audioEncHandle, configuration)) {
+        LOGI("音频配置失败");
+    };
+    LOGI("音频编码器打开成功！");
 }
 
+JNIEXPORT void JNICALL
+Java_com_hubing_hlivepusher_pusher_PushNative_fireAudio(JNIEnv *env, jobject instance,
+                                                        jbyteArray buff_,jint length) {
+    jbyte *buff = env->GetByteArrayElements(buff_, NULL);
+    //int publishing;
+    //int readyRtmp;
+    if(!publishing||!readyRtmp || !audioEncHandle){
+        LOGI("还没开始推流");
+        return;
+    }
+    unsigned char* outputBuffer = (unsigned char *) malloc(nMaxOutputBytes * sizeof(unsigned char));
+    int len = faacEncEncode(audioEncHandle, (int32_t *) buff, nInputSamples, outputBuffer, nMaxOutputBytes);
+    if(len>0){
+        add_aac_body_data(outputBuffer,len);
+    }
+    if(outputBuffer) {
+        free(outputBuffer);
+    }
+    env->ReleaseByteArrayElements(buff_, buff, 0);
+}
 
+/**
+ * 解码数据
+ */
+void add_aac_head_data() {
+    if (!audioEncHandle) {
+        return;
+    }
+    unsigned char *buf;
+    ULONG len;/*buf长度,一般是2*/
+    faacEncGetDecoderSpecificInfo(audioEncHandle, &buf, &len);
+    RTMPPacket *packet = (RTMPPacket *) malloc(sizeof(RTMPPacket));
+    RTMPPacket_Alloc(packet, len + 2);
+    RTMPPacket_Reset(packet);
+    unsigned char *body = (unsigned char *) packet->m_body;
+    /*AF 00 + AAC RAW data*/
+    body[0] = 0xAF;
+    body[1] = 0x00;
+    memcpy(&body[2], buf, len); /*spec_buf是AAC sequence header数据*/
+    packet->m_packetType = RTMP_PACKET_TYPE_AUDIO;
+    packet->m_nBodySize = len + 2;
+    packet->m_nChannel = 0x04;
+    packet->m_hasAbsTimestamp = 0;
+    packet->m_nTimeStamp = 0;
+    packet->m_hasAbsTimestamp = 0;
+    packet->m_headerType = RTMP_PACKET_SIZE_LARGE;
+    add_rtmp_packet(packet);
+    free(buf);
+}
+
+void add_aac_body_data(unsigned char *buffer, int len) {
+
+    RTMPPacket* packet = (RTMPPacket *) malloc(sizeof(RTMPPacket));
+    RTMPPacket_Alloc(packet,len+2);
+    char * body = packet->m_body;
+    body[0] = 0xaf;
+    body[1] = 0x01;
+    memcpy(body+2,buffer,len);
+    packet->m_packetType = RTMP_PACKET_TYPE_AUDIO;
+    packet->m_nBodySize = len+2;
+    packet->m_nChannel = 0x04;
+    packet->m_hasAbsTimestamp = 0;
+    packet->m_headerType = RTMP_PACKET_SIZE_MEDIUM;
+    packet->m_nTimeStamp = RTMP_GetTime() - start_time;
+    add_rtmp_packet(packet);
+}
+}
