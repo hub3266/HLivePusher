@@ -31,6 +31,8 @@ public class VideoPusher extends Pusher implements SurfaceHolder.Callback, Camer
     private byte[] buffers;
 
     private Activity activity;
+    private int rotation;
+    private byte[] raw;
 
     public VideoPusher(VideoParams params, Activity activity, SurfaceHolder surfaceHolder) {
         this.params = params;
@@ -88,6 +90,7 @@ public class VideoPusher extends Pusher implements SurfaceHolder.Callback, Camer
             int bitPerPixel = ImageFormat.getBitsPerPixel(ImageFormat.NV21);
             //videoParam.getWidth() * videoParam.getHeight()*bitPerPixel/8  数据大
             buffers = new byte[params.getWidth() * params.getHeight() * bitPerPixel / 8];
+            raw = new byte[params.getWidth() * params.getHeight() * bitPerPixel / 8];
             camera.addCallbackBuffer(buffers);
             camera.setPreviewCallbackWithBuffer(this);
             camera.startPreview();
@@ -131,6 +134,17 @@ public class VideoPusher extends Pusher implements SurfaceHolder.Callback, Camer
             //不这写的话 只会调用一次
             camera.addCallbackBuffer(bytes);
             if (pushing) {
+                switch (rotation) {
+                    case Surface.ROTATION_0:
+                        portraitData2Raw(bytes,raw);
+                        break;
+                    case Surface.ROTATION_90:
+                        raw = bytes;
+                        break;
+                    case Surface.ROTATION_270:
+                        landscapeData2Raw(bytes,raw);
+                        break;
+                }
                 PushNative.getInstance().fireVideo(bytes);
             }
         }
@@ -164,7 +178,7 @@ public class VideoPusher extends Pusher implements SurfaceHolder.Callback, Camer
     }
 
     private void setPreviewOrientation(Camera.Parameters paramters) {
-        int rotation = activity.getWindowManager().getDefaultDisplay().getRotation();
+        rotation = activity.getWindowManager().getDefaultDisplay().getRotation();
         switch (rotation) {
             case Surface.ROTATION_0:
                 PushNative.getInstance().setVideoOptions(params.getHeight(), params.getWidth(), params.getBitrate(), params.getFps());
@@ -189,5 +203,74 @@ public class VideoPusher extends Pusher implements SurfaceHolder.Callback, Camer
             result = (cameraInfo.orientation - rotation + 360) % 360;
         }
         camera.setDisplayOrientation(result);
+
+    }
+
+
+    private void landscapeData2Raw(byte[] data,byte[] raw) {
+        int width = params.getWidth(), height = params.getHeight();
+        int y_len = width * height;
+        int k = 0;
+        // y数据倒叙插入raw中
+        for (int i = y_len - 1; i > -1; i--) {
+            raw[k] = data[i];
+            k++;
+        }
+        // System.arraycopy(data, y_len, raw, y_len, uv_len);
+        // v1 u1 v2 u2
+        // v3 u3 v4 u4
+        // 需要转换为:
+        // v4 u4 v3 u3
+        // v2 u2 v1 u1
+        int maxpos = data.length - 1;
+        int uv_len = y_len >> 2; // 4:1:1
+        for (int i = 0; i < uv_len; i++) {
+            int pos = i << 1;
+            raw[y_len + i * 2] = data[maxpos - pos - 1];
+            raw[y_len + i * 2 + 1] = data[maxpos - pos];
+        }
+    }
+
+    private void portraitData2Raw(byte[] data,byte[] raw) {
+        // if (mContext.getResources().getConfiguration().orientation !=
+        // Configuration.ORIENTATION_PORTRAIT) {
+        // raw = data;
+        // return;
+        // }
+        int width = params.getWidth(), height = params.getHeight();
+        int y_len = width * height;
+        int uvHeight = height >> 1; // uv数据高为y数据高的一半
+        int k = 0;
+        if (params.getCameraId() == Camera.CameraInfo.CAMERA_FACING_BACK) {
+            for (int j = 0; j < width; j++) {
+                for (int i = height - 1; i >= 0; i--) {
+                    raw[k++] = data[width * i + j];
+                }
+            }
+            for (int j = 0; j < width; j += 2) {
+                for (int i = uvHeight - 1; i >= 0; i--) {
+                    raw[k++] = data[y_len + width * i + j];
+                    raw[k++] = data[y_len + width * i + j + 1];
+                }
+            }
+        } else {
+            for (int i = 0; i < width; i++) {
+                int nPos = width - 1;
+                for (int j = 0; j < height; j++) {
+                    raw[k] = data[nPos - i];
+                    k++;
+                    nPos += width;
+                }
+            }
+            for (int i = 0; i < width; i += 2) {
+                int nPos = y_len + width - 1;
+                for (int j = 0; j < uvHeight; j++) {
+                    raw[k] = data[nPos - i - 1];
+                    raw[k + 1] = data[nPos - i];
+                    k += 2;
+                    nPos += width;
+                }
+            }
+        }
     }
 }
