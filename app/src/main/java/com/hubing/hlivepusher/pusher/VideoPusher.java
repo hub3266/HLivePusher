@@ -1,12 +1,14 @@
 package com.hubing.hlivepusher.pusher;
 
 
+import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
 import android.graphics.ImageFormat;
 import android.hardware.Camera;
 import android.util.Log;
 import android.view.Display;
+import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.WindowManager;
 
@@ -28,10 +30,13 @@ public class VideoPusher extends Pusher implements SurfaceHolder.Callback, Camer
     private SurfaceHolder surfaceHolder;
     private byte[] buffers;
 
-    public VideoPusher(VideoParams params, SurfaceHolder surfaceHolder) {
+    private Activity activity;
+
+    public VideoPusher(VideoParams params, Activity activity, SurfaceHolder surfaceHolder) {
         this.params = params;
         this.surfaceHolder = surfaceHolder;
         surfaceHolder.addCallback(this);
+        this.activity = activity;
 
     }
 
@@ -74,17 +79,9 @@ public class VideoPusher extends Pusher implements SurfaceHolder.Callback, Camer
         try {
             camera = Camera.open(params.getCameraId());
             Camera.Parameters paramters = camera.getParameters();
-
-//            List<Camera.Size> pictureSizes = paramters.getSupportedPictureSizes();
-//            int length = pictureSizes.size();
-//            for (int i = 0; i < length; i++) {
-//                Log.i("camera","SupportedPictureSizes : " + pictureSizes.get(i).width + "x" + pictureSizes.get(i).height);
-//            }
-
             paramters.setPictureFormat(ImageFormat.NV21);
-           // paramters.setPreviewSize(params.getWidth(), params.getHeight());
             setPreviewSize(paramters);
-            PushNative.getInstance().setVideoOptions(params.getWidth(),params.getHeight(),params.getBitrate(),params.getFps());
+            setPreviewOrientation(paramters);
             camera.setParameters(paramters);
             camera.setPreviewDisplay(surfaceHolder);
             //获取预览图像数据
@@ -133,7 +130,7 @@ public class VideoPusher extends Pusher implements SurfaceHolder.Callback, Camer
         if (camera != null) {
             //不这写的话 只会调用一次
             camera.addCallbackBuffer(bytes);
-            if(pushing){
+            if (pushing) {
                 PushNative.getInstance().fireVideo(bytes);
             }
         }
@@ -164,5 +161,33 @@ public class VideoPusher extends Pusher implements SurfaceHolder.Callback, Camer
         params.setWidth(size.width);
         parameters.setPreviewSize(params.getWidth(), params.getHeight());
         Log.d(TAG, "预览分辨率 width:" + size.width + " height:" + size.height);
+    }
+
+    private void setPreviewOrientation(Camera.Parameters paramters) {
+        int rotation = activity.getWindowManager().getDefaultDisplay().getRotation();
+        switch (rotation) {
+            case Surface.ROTATION_0:
+                PushNative.getInstance().setVideoOptions(params.getHeight(), params.getWidth(), params.getBitrate(), params.getFps());
+                break;
+            case Surface.ROTATION_90:
+                PushNative.getInstance().setVideoOptions(params.getWidth(), params.getHeight(), params.getBitrate(), params.getFps());
+                break;
+            case Surface.ROTATION_180:
+                PushNative.getInstance().setVideoOptions(params.getHeight(), params.getWidth(), params.getBitrate(), params.getFps());
+                break;
+            case Surface.ROTATION_270:
+                PushNative.getInstance().setVideoOptions(params.getWidth(), params.getHeight(), params.getBitrate(), params.getFps());
+                break;
+        }
+        int result;
+        Camera.CameraInfo cameraInfo = new Camera.CameraInfo();
+        Camera.getCameraInfo(params.getCameraId(), cameraInfo);
+        if (cameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
+            result = (cameraInfo.orientation + rotation) % 360;
+            result = (360 - result) % 360;  // compensate the mirror
+        } else {  // back-facing
+            result = (cameraInfo.orientation - rotation + 360) % 360;
+        }
+        camera.setDisplayOrientation(result);
     }
 }

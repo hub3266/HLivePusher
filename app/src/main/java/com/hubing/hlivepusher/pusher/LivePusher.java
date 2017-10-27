@@ -1,5 +1,6 @@
 package com.hubing.hlivepusher.pusher;
 
+import android.app.Activity;
 import android.hardware.Camera;
 import android.view.SurfaceHolder;
 
@@ -15,14 +16,14 @@ public class LivePusher {
     private VideoPusher videoPusher;
     private SurfaceHolder surfaceHolder;
 
-    public LivePusher(SurfaceHolder surfaceHolder) {
+    public LivePusher(SurfaceHolder surfaceHolder, Activity activity) {
         this.surfaceHolder = surfaceHolder;
-        init();
+        init(activity);
     }
 
-    private void init() {
+    private void init(Activity activity) {
         audioPusher = new AudioPusher(new AudioParams(44100,1));
-        videoPusher = new VideoPusher(new VideoParams(800,480, Camera.CameraInfo.CAMERA_FACING_BACK),surfaceHolder);
+        videoPusher = new VideoPusher(new VideoParams(800,480, Camera.CameraInfo.CAMERA_FACING_BACK),activity,surfaceHolder);
     }
 
     public void startPush(String url){

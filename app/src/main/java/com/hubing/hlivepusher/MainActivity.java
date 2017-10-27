@@ -18,7 +18,7 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         SurfaceView surfaceView = (SurfaceView) findViewById(R.id.surface);
-        livePusher = new LivePusher(surfaceView.getHolder());
+        livePusher = new LivePusher(surfaceView.getHolder(),MainActivity.this);
         Button start = (Button) findViewById(R.id.start);
         Button switchVideo = (Button) findViewById(R.id.switchVideo);
         switchVideo.setOnClickListener(new View.OnClickListener() {
